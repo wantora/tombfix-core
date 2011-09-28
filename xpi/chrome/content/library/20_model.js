@@ -917,15 +917,17 @@ models.register({
 models.register({
 	name : 'GoogleBookmarks',
 	ICON : models.Google.ICON,
+	POST_URL : 'https://www.google.com/bookmarks/mark',
 	
 	check : function(ps){
 		return (/(photo|quote|link|conversation|video)/).test(ps.type) && !ps.file;
 	},
 	
 	post : function(ps){
-		return request('https://www.google.com/bookmarks/mark', {
+		return request(this.POST_URL, {
 			queryString : {
-				op : 'add',
+				op : 'edit',
+				output : 'popup'
 			},
 		}).addCallback(function(res){
 			var doc = convertToHTMLDocument(res.responseText);
@@ -947,30 +949,87 @@ models.register({
 		});
 	},
 	
-	getSuggestions : function(url){
+	getEntry : function(url){
 		var self = this;
-		if(this.tags){
-			return succeed({
-				duplicated: false,
-				recommended: [],
-				tags: this.tags
-			});
-		} else {
-			return request('http://www.google.com/bookmarks').addCallback(function(res){
-				var doc = convertToHTMLDocument(res.responseText);
-				self.tags = $x('descendant::a[starts-with(normalize-space(@id), "lbl_m_") and number(substring(normalize-space(@id), 7)) >= 0]/text()', doc, true).map(function(tag){
-					return {
-						name      : tag,
-						frequency : -1
-					};
-				});
+		return request(this.POST_URL, {
+			queryString : {
+				op : 'edit',
+				output : 'popup',
+				bkmk : url
+			}
+		}).addCallback(function(res){
+			var doc = convertToHTMLDocument(res.responseText);
+			
+			var duplicated = false;
+			var title = $x('//form[@name="add_bkmk_form"]//input[@name="title"]/@value', doc);
+			var tags = $x('//form[@name="add_bkmk_form"]//input[@name="labels"]/@value', doc)
+				.split(/,/).map(function(tag){ return tag.trim(); });
+			var description = $x('//form[@name="add_bkmk_form"]//textarea[@name="annotation"]/text()', doc);
+			
+			// メッセージで判定
+			switch ($x('//h1/text()', doc).trim()) {
+			case 'Add a bookmark':
+				duplicated = false;
+				break;
+			case 'Edit bookmark':
+				duplicated = true;
+				break;
+			// メッセージが変更された場合の対策
+			default:
+				duplicated = (title !== '');
+				break;
+			}
+			
+			return {
+				duplicated  : duplicated,
+				item        : title,
+				tags        : tags,
+				description : description
+			};
+		});
+	},
+	
+	getUserTags : function(){
+		return request('https://www.google.com/bookmarks/api/bookmark', {
+			queryString : {
+				op : 'LIST_LABELS'
+			}
+		}).addCallback(function(res){
+			var data = JSON.parse(res.responseText);
+			return zip(data["labels"], data["counts"]).map(function(pair){
 				return {
-					duplicated: false,
-					recommended: [],
-					tags: self.tags
+					name      : pair[0],
+					frequency : pair[1]
 				};
 			});
-		}
+		});
+	},
+	
+	getSuggestions : function(url){
+		var self = this;
+		return new DeferredHash({
+			tags : self.getUserTags(),
+			entry : self.getEntry(url)
+		}).addCallback(function(ress){
+			var entry = ress.entry[1];
+			var tags = ress.tags[1];
+			
+			var duplicated = entry.duplicated;
+			delete entry.duplicated;
+			
+			var endpoint = self.POST_URL + '?' + queryString({
+				op : 'edit',
+				bkmk : url
+			});
+			
+			return {
+				form        : duplicated ? entry : null,
+				editPage    : endpoint,
+				tags        : tags,
+				duplicated  : duplicated,
+				recommended : []
+			};
+		});
 	}
 });
 
