@@ -1324,18 +1324,19 @@ models.register(update({}, AbstractSessionService, {
 	getCurrentUser : function(){
 		var self = this;
 		return this.getSessionValue('user', function(){
-			return self.getInfo().addCallback(function(info){
-				if(!info.is_logged_in)
+			return self.getInfo().addCallback(function(doc){
+				var logged_in_username = doc.getElementById('logged_in_username');
+				if(!logged_in_username)
 					throw new Error(getMessage('error.notLoggedin'));
 				
-				return info.logged_in_username;
+				return logged_in_username.name;
 			});
 		});
 	},
 	
 	getInfo : function(){
-		return request('http://delicious.com/save/quick', {method : 'POST'}).addCallback(function(res){
-			return evalInSandbox('(' + res.responseText + ')', 'http://delicious.com/');
+		return request('http://www.delicious.com/').addCallback(function(res){
+			return convertToHTMLDocument(res.responseText);
 		});
 	},
 	
